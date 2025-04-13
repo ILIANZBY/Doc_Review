@@ -445,9 +445,10 @@ def kb_chat(api: ApiRequest):
                         st.success(f"报告成功保存 (长度: {len(saved_record['report_content'])})")
                     else:
                         st.error("报告保存失败：无法验证保存的内容")
-                        st.write("Debug: 数据库返回记录:", saved_record)
+                        st.write(f"Debug: 数据库记录状态: {saved_record}")
                 except Exception as e:
                     st.error(f"保存报告时发生错误: {str(e)}")
+                    st.write(f"Debug: 错误详情: {e.__class__.__name__}")
             else:
                 st.error("保存失败：缺少必要信息")
                 st.write(f"Debug: knowledge_id: {knowledge_id}, report length: {len(full_report_text) if full_report_text else 0}")

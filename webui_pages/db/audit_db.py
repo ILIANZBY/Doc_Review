@@ -69,21 +69,24 @@ class AuditDatabase:
                 file_info.get("单位", "")
             ))
 
-    def update_record(self, file_id, status, score=None, is_pass=None, report_content=None):
+    def update_record(self, file_id: str, status: str, score: int, is_pass: str, report_content: str):
+        """更新审核记录"""
         with sqlite3.connect(self.db_path) as conn:
-            if score is not None and is_pass is not None:
-                conn.execute('''
+            try:
+                conn.execute("""
                     UPDATE audit_records 
-                    SET status=?, score=?, is_pass=?, audit_time=?, report_content=?
-                    WHERE file_id=?
-                ''', (status, score, is_pass, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-                     report_content, file_id))
-            else:
-                conn.execute('''
-                    UPDATE audit_records 
-                    SET status=?
-                    WHERE file_id=?
-                ''', (status, file_id))
+                    SET status = ?, 
+                        score = ?, 
+                        is_pass = ?, 
+                        report_content = ?,
+                        audit_time = CURRENT_TIMESTAMP
+                    WHERE file_id = ?
+                """, (status, score, is_pass, report_content, file_id))
+                conn.commit()
+                return True
+            except Exception as e:
+                print(f"更新记录失败: {str(e)}")
+                return False
 
     def update_audit_status(self, file_id: str, status: str, score: float = None, passed: bool = None, report_content: str = None):
         """更新审核状态和结果"""
@@ -150,6 +153,22 @@ class AuditDatabase:
                     "file_id": row[6]
                 })
             return records
+
+    def get_record_by_id(self, file_id: str) -> dict:
+        """根据file_id获取审核记录"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row  # 启用字典形式的结果
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM audit_records WHERE file_id = ?", 
+                (file_id,)
+            )
+            record = cursor.fetchone()
+            
+            if record:
+                # 将sqlite3.Row对象转换为字典
+                return dict(record)
+            return None
 
     def get_report(self, file_id: str) -> str:
         """获取审核报告内容"""
