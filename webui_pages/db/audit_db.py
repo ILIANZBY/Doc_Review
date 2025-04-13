@@ -185,3 +185,14 @@ class AuditDatabase:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute('SELECT COUNT(*) FROM audit_records')
             return cursor.fetchone()[0]
+
+    def get_all_records(self):
+        """获取所有审核记录"""
+        try:
+            collection = self.db[self.collection_name]
+            # 获取所有记录并转换为列表
+            records = list(collection.find({}, {'_id': 0}))  # 排除 _id 字段
+            return records
+        except Exception as e:
+            print(f"获取所有记录失败: {str(e)}")
+            return []

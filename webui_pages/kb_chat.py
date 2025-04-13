@@ -8,6 +8,10 @@ import streamlit as st
 import streamlit_antd_components as sac
 from streamlit_chatbox import *
 from streamlit_extras.bottom_container import bottom
+import zipfile
+import tempfile
+import os
+import mimetypes
 
 from chatchat.settings import Settings
 from chatchat.server.knowledge_base.utils import LOADER_DICT
@@ -103,6 +107,36 @@ def init_widgets():
     st.session_state.setdefault("show_audit_records", False)  # 控制审核记录显示状态
     st.session_state.setdefault("audit_page", 1)
 
+def process_uploaded_files(files):
+    """处理上传的文件，支持单个文件和文件夹"""
+    processed_files = []
+    
+    for file in files:
+        # 检查是否是文件夹（ZIP格式）
+        if file.name.endswith('.zip'):
+            with zipfile.ZipFile(file, 'r') as zip_ref:
+                # 创建临时目录
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    zip_ref.extractall(temp_dir)
+                    # 遍历解压后的文件
+                    for root, _, filenames in os.walk(temp_dir):
+                        for filename in filenames:
+                            # 检查文件扩展名是否在支持的格式列表中
+                            if any(filename.endswith(ext) for ext in [i for ls in LOADER_DICT.values() for i in ls]):
+                                file_path = os.path.join(root, filename)
+                                with open(file_path, 'rb') as f:
+                                    # 创建类似于 UploadedFile 的对象
+                                    processed_files.append({
+                                        'file': f.read(),
+                                        'name': filename,
+                                        'type': mimetypes.guess_type(filename)[0]
+                                    })
+        else:
+            # 单个文件直接添加
+            processed_files.append(file)
+    
+    return processed_files
+
 def extract_audit_result(text: str) -> tuple[int, str]:
     """从标准格式的审核结果中提取分数和通过状态"""
     # 调试输出
@@ -149,6 +183,48 @@ def extract_audit_result(text: str) -> tuple[int, str]:
     st.write(f"Debug: 使用的匹配模式: {matched_pattern}")
     
     return score, status
+
+def export_all_reports():
+    """导出所有审核报告为ZIP文件"""
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = AuditDatabase()
+            records = db.get_all_records()
+            
+            if not records:
+                st.warning("没有找到任何审核记录")
+                return None
+            
+            reports_created = 0
+            for record in records:
+                if record.get("report_content"):
+                    try:
+                        filename = f"{record['文件名']}_审核报告.md"
+                        file_path = os.path.join(temp_dir, filename)
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(record["report_content"])
+                        reports_created += 1
+                    except Exception as e:
+                        st.error(f"处理记录时出错 ({record.get('文件名', '未知文件')}): {str(e)}")
+                        continue
+            
+            if reports_created == 0:
+                st.warning("没有可导出的报告内容")
+                return None
+            
+            # 创建ZIP文件
+            zip_path = os.path.join(temp_dir, "所有审核报告.zip")
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                for root, _, files in os.walk(temp_dir):
+                    for file in files:
+                        if file.endswith('.md'):
+                            zipf.write(os.path.join(root, file), file)
+            
+            with open(zip_path, 'rb') as f:
+                return f.read()
+    except Exception as e:
+        st.error(f"导出报告时发生错误: {str(e)}")
+        return None
 
 def kb_chat(api: ApiRequest):
     ctx = chat_box.context
@@ -234,7 +310,7 @@ def kb_chat(api: ApiRequest):
                     if st.button("开始上传", disabled=len(files) == 0):
                         st.session_state["file_chat_id"] = upload_temp_docs(files, api)
                 elif dialogue_mode == "审核评价模式":
-                    col1, col2, col3 = st.columns([2, 2, 1])
+                    col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
                     
                     with col1:
                         kb_list = [x["kb_name"] for x in api.list_knowledge_bases()]
@@ -246,36 +322,54 @@ def kb_chat(api: ApiRequest):
                         )
                     
                     with col2:
-                        files = st.file_uploader("上传待审核文件：",
-                                                [i for ls in LOADER_DICT.values() for i in ls],
+                        files = st.file_uploader("上传待审核文件或文件夹（ZIP）：",
+                                                [i for ls in LOADER_DICT.values() for i in ls] + ['zip'],
                                                 accept_multiple_files=True,
                                                 )
                     
                     with col3:
                         if st.button("📋 审核记录", use_container_width=True, key="show_audit_btn"):
-                            st.switch_page("pages/audit_records_page.py")  # 跳转到审核记录页面
+                            st.switch_page("pages/audit_records_page.py")
+                    
+                    with col4:
+                        export_data = export_all_reports()
+                        if export_data is not None:
+                            if st.download_button(
+                                "📥 导出全部",
+                                data=export_data,
+                                file_name="所有审核报告.zip",
+                                mime="application/zip",
+                                use_container_width=True
+                            ):
+                                st.success("已导出所有审核报告")
+                        else:
+                            st.button("📥 导出全部", disabled=True, use_container_width=True)
                     
                     st.divider()
                     
-                    # 如果需要显示审核记录
-                    if st.session_state.get("show_audit_records", False):
-                        show_audit_records_dialog()
-                    
                     # 上传按钮
                     if st.button("开始审核", disabled=len(files) == 0):
-                        file_chat_id = upload_temp_docs(files, api)
-                        st.session_state["file_chat_id"] = file_chat_id
+                        # 处理上传的文件
+                        processed_files = process_uploaded_files(files)
                         
-                        # 打印调试信息
-                        st.write("正在处理的文件：")
-                        for file in files:
-                            st.write(f"- {file.name}")
+                        if not processed_files:
+                            st.error("没有找到可处理的文件")
+                            st.stop()
+                        
+                        # 创建进度条
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
                         
                         db = AuditDatabase()
-                        # 保存第一个文件名用于报告命名
-                        st.session_state["current_audit_filename"] = files[0].name if files else "未命名文件"
+                        total_files = len(processed_files)
                         
-                        for file in files:
+                        for idx, file in enumerate(processed_files, 1):
+                            status_text.text(f"正在处理 {file.name} ({idx}/{total_files})")
+                            
+                            # 上传单个文件并获取chat_id
+                            file_chat_id = upload_temp_docs([file], api)
+                            
+                            # 保存文件信息到数据库
                             file_info = {
                                 "文件名": file.name,
                                 "状态": "正在处理文档",
@@ -285,9 +379,17 @@ def kb_chat(api: ApiRequest):
                                 "总分": "-"
                             }
                             db.add_record(file_info)
+                            
+                            # 触发该文件的自动审核
+                            st.session_state["file_chat_id"] = file_chat_id
+                            st.session_state["current_audit_filename"] = file.name
+                            st.session_state["trigger_auto_audit"] = True
+                            
+                            # 更新进度
+                            progress_bar.progress(idx/total_files)
                         
-                        st.success(f"已上传 {len(files)} 个文件，开始自动审核...")
-                        st.session_state["trigger_auto_audit"] = True
+                        status_text.text("所有文件处理完成！")
+                        st.success(f"已上传并开始审核 {total_files} 个文件")
                         st.rerun()
                 elif dialogue_mode == "搜索引擎问答":
                     search_engine_list = list(Settings.tool_settings.search_internet["search_engine_config"])
@@ -345,6 +447,10 @@ def kb_chat(api: ApiRequest):
         
         knowledge_id = st.session_state.get("file_chat_id")
         selected_kb = st.session_state.get("selected_kb")
+        
+        # 显示当前正在处理的文件名
+        current_file = st.session_state.get("current_audit_filename", "未知文件")
+        st.info(f"正在审核: {current_file}")
         
         # 获取上传文档的内容
         api_url = api_address(is_public=True)
@@ -408,6 +514,7 @@ def kb_chat(api: ApiRequest):
         first = True
         try:
             for i, file_info in enumerate(st.session_state.audit_files):
+                
                 if file_info["file_id"] == knowledge_id:
                     st.session_state.audit_files[i]["状态"] = "正在模型推理"
             
