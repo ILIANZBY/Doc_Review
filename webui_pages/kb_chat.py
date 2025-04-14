@@ -226,6 +226,52 @@ def export_all_reports():
         st.error(f"导出报告时发生错误: {str(e)}")
         return None
 
+def update_record(self, file_id: str, status: str, score: int, is_pass: str, report_content: str):
+    """更新审核记录"""
+    try:
+        conn = self._get_connection()
+        c = conn.cursor()
+        
+        # 1. 检查现有记录
+        c.execute("SELECT * FROM audit_records WHERE file_id = ?", (file_id,))
+        existing = c.fetchone()
+        
+        if existing:
+            # 更新记录
+            c.execute("""
+                UPDATE audit_records 
+                SET status = ?,
+                    score = ?,
+                    is_pass = ?,
+                    report_content = ?,
+                    update_time = CURRENT_TIMESTAMP
+                WHERE file_id = ?
+            """, (status, score, is_pass.split()[0], report_content, file_id))
+        else:
+            # 插入新记录
+            c.execute("""
+                INSERT INTO audit_records 
+                (file_id, status, score, is_pass, report_content, create_time, update_time)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """, (file_id, status, score, is_pass.split()[0], report_content))
+        
+        conn.commit()
+        
+        # 验证保存是否成功
+        c.execute("SELECT report_content FROM audit_records WHERE file_id = ?", (file_id,))
+        saved = c.fetchone()
+        if not saved or not saved[0]:
+            print(f"Warning: Report content not saved for file_id {file_id}")
+            return False
+            
+        return True
+    except Exception as e:
+        print(f"Error updating record: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
 def kb_chat(api: ApiRequest):
     ctx = chat_box.context
     ctx.setdefault("uid", uuid.uuid4().hex)
@@ -535,27 +581,29 @@ def kb_chat(api: ApiRequest):
             score, status = extract_audit_result(full_report_text)
 
             # 在保存报告前添加验证和错误处理
-            if knowledge_id and full_report_text:
+            if score is not None:
                 try:
                     db = AuditDatabase()
-                    update_result = db.update_record(
+                    # 1. 先更新记录基本信息
+                    update_success = db.update_record(
                         file_id=knowledge_id,
                         status="已审核",
                         score=score,
-                        is_pass=status,
+                        is_pass=status,  # 只保存"通过"或"不通过"
                         report_content=full_report_text
                     )
                     
-                    # 立即验证保存是否成功
+                    # 2. 验证更新和报告保存是否成功
                     saved_record = db.get_record_by_id(knowledge_id)
-                    if saved_record and saved_record.get("report_content"):
-                        st.success(f"报告成功保存 (长度: {len(saved_record['report_content'])})")
+                    if not saved_record or not saved_record.get("report_content"):
+                        st.error("报告保存失败")
+                        st.write("Debug: 保存的记录状态:", saved_record)
                     else:
-                        st.error("报告保存失败：无法验证保存的内容")
-                        st.write(f"Debug: 数据库记录状态: {saved_record}")
+                        st.success(f"审核完成 - 总分：{score}分，状态：{status}")
+                        
                 except Exception as e:
-                    st.error(f"保存报告时发生错误: {str(e)}")
-                    st.write(f"Debug: 错误详情: {e.__class__.__name__}")
+                    st.error(f"保存记录时出错: {str(e)}")
+                    st.write("Debug: 错误详情:", e)
             else:
                 st.error("保存失败：缺少必要信息")
                 st.write(f"Debug: knowledge_id: {knowledge_id}, report length: {len(full_report_text) if full_report_text else 0}")

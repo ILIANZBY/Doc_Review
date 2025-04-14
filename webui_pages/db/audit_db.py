@@ -172,14 +172,23 @@ class AuditDatabase:
 
     def get_report(self, file_id: str) -> str:
         """获取审核报告内容"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT report_content 
-                FROM audit_records 
-                WHERE file_id=?
-            ''', (file_id,))
-            row = cursor.fetchone()
-            return row[0] if row else None
+        try:
+            conn = self._get_connection()
+            c = conn.cursor()
+            c.execute("SELECT report_content FROM audit_records WHERE file_id = ?", (file_id,))
+            result = c.fetchone()
+            
+            if result and result[0]:
+                return result[0]
+            
+            print(f"No report content found for file_id: {file_id}")
+            return None
+        except Exception as e:
+            print(f"Error getting report: {e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
 
     def get_total_count(self):
         with sqlite3.connect(self.db_path) as conn:

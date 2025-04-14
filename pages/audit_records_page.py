@@ -40,6 +40,7 @@ def show_audit_records():
                         "总分": record["总分"] if record["总分"] is not None else "-",
                         "是否通过": record["是否通过"],
                         "操作": ""  # 这里先留空，后面用按钮填充
+                        
                     }
                     
                     df_data.append(file_info)
@@ -47,7 +48,7 @@ def show_audit_records():
                 except Exception as e:
                     st.error(f"处理记录时出错：{str(e)}")
                     st.write("问题记录：", record)
-
+            print(file_info)
             df = pd.DataFrame(df_data)
             
             # 使用 AgGrid 或自定义组件来显示表格
@@ -58,6 +59,7 @@ def show_audit_records():
                 cols[2].write(df.iloc[i]["审核时间"])
                 cols[3].write(df.iloc[i]["总分"])
                 cols[4].write(df.iloc[i]["是否通过"])
+                # cols[5].write(df.iloc[i]["下载报告"])
                 
                 # 修改下载按钮逻辑
                 record = records[i]
