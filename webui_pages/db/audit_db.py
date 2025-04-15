@@ -126,14 +126,14 @@ class AuditDatabase:
             # 根据是否存在 unit 列构建查询语句
             if 'unit' in columns:
                 select_sql = '''
-                    SELECT file_name, status, audit_time, score, is_pass, unit, file_id 
+                    SELECT file_name, status, audit_time, score, is_pass, unit, file_id ,report_content
                     FROM audit_records 
                     ORDER BY created_at DESC
                     LIMIT ? OFFSET ?
                 '''
             else:
                 select_sql = '''
-                    SELECT file_name, status, audit_time, score, is_pass, '' as unit, file_id 
+                    SELECT file_name, status, audit_time, score, is_pass, '' as unit, file_id ,report_content
                     FROM audit_records 
                     ORDER BY created_at DESC
                     LIMIT ? OFFSET ?
@@ -150,7 +150,8 @@ class AuditDatabase:
                     "总分": row[3] if row[3] is not None else "-",
                     "是否通过": row[4] if row[4] is not None else "待审核",
                     "单位": row[5] if row[5] is not None else "",
-                    "file_id": row[6]
+                    "file_id": row[6],
+                    "report_content": row[7] if row[7] is not None else ""
                 })
             return records
 

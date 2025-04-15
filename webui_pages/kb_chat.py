@@ -103,6 +103,7 @@ def init_widgets():
 3. "总分"和"审核结果"必须严格按照上述格式输出
 4. 不要在分数部分添加任何额外的说明文字
 5. 评分时即使信息不完整也要给出具体分值
+6. 评分的分数最好在75到90之间分布，大部分文档是合格的
 """)
     st.session_state.setdefault("show_audit_records", False)  # 控制审核记录显示状态
     st.session_state.setdefault("audit_page", 1)

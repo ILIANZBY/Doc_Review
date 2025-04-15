@@ -8,7 +8,7 @@ st.set_page_config(page_title="审核记录", layout="wide")
 def show_audit_records():
     try:
         # 添加调试信息
-        st.write("Debug: 开始获取审核记录")
+        # st.write("Debug: 开始获取审核记录")
         
         db = AuditDatabase()
         page = st.session_state.get("audit_page", 1)
@@ -22,7 +22,7 @@ def show_audit_records():
         total_pages = (total_records + per_page - 1) // per_page
         
         # 打印原始记录用于调试
-        st.write("Debug: 获取到的记录：", records)
+        # st.write("Debug: 获取到的记录：", records)
         
         if records:
             df_data = []
@@ -31,7 +31,7 @@ def show_audit_records():
                 try:
                     # 检查报告内容
                     report_content = record.get('report_content')
-                    st.write(f"Debug: Record {idx} has report: {bool(report_content)}")
+                    # st.write(f"Debug: Record {idx} has report: {bool(report_content)}")
                     
                     file_info = {
                         "文件名": record["文件名"],
@@ -39,8 +39,8 @@ def show_audit_records():
                         "审核时间": record["审核时间"],
                         "总分": record["总分"] if record["总分"] is not None else "-",
                         "是否通过": record["是否通过"],
-                        "操作": ""  # 这里先留空，后面用按钮填充
-                        
+                        "操作": "",  # 这里先留空，后面用按钮填充
+                        "下载报告": ""
                     }
                     
                     df_data.append(file_info)
@@ -53,21 +53,21 @@ def show_audit_records():
             
             # 使用 AgGrid 或自定义组件来显示表格
             for i in range(len(df)):
-                cols = st.columns([2, 1, 2, 1, 1, 2])
+                cols = st.columns([2, 1, 2, 1, 1, 2, 2])
                 cols[0].write(df.iloc[i]["文件名"])
                 cols[1].write(df.iloc[i]["状态"])
                 cols[2].write(df.iloc[i]["审核时间"])
                 cols[3].write(df.iloc[i]["总分"])
                 cols[4].write(df.iloc[i]["是否通过"])
-                # cols[5].write(df.iloc[i]["下载报告"])
+                cols[5].write(df.iloc[i]["操作"])
                 
                 # 修改下载按钮逻辑
                 record = records[i]
                 report_content = record.get('report_content')
                 
                 if report_content and record["状态"] == "已审核":
-                    st.write("Debug: 存在报告内容，长度:", len(report_content))
-                    cols[5].download_button(
+                    # st.write("Debug: 存在报告内容，长度:", len(report_content))
+                    cols[6].download_button(
                         label="📥 下载报告",
                         data=report_content,
                         file_name=f"{record['文件名']}_审核报告.md",
@@ -75,8 +75,8 @@ def show_audit_records():
                         key=f"download_{i}",
                     )
                 else:
-                    st.write(f"Debug: 记录 {i} 无报告内容或未审核")
-                    cols[5].write("-")
+                    # st.write(f"Debug: 记录 {i} 无报告内容或未审核")
+                    cols[6].write("-")
                 
                 # 添加分隔线
                 st.markdown("---")
