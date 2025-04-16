@@ -98,12 +98,13 @@ def init_widgets():
 3. ...
 
 请注意：
-1. 分数必须是整数，不要包含小数点
+1. 分数保存到小数点后一位
 2. 分数后面必须加"分"字
 3. "总分"和"审核结果"必须严格按照上述格式输出
 4. 不要在分数部分添加任何额外的说明文字
 5. 评分时即使信息不完整也要给出具体分值
 6. 评分的分数最好在75到90之间分布，大部分文档是合格的
+7. 生成的评分尽量不同
 """)
     st.session_state.setdefault("show_audit_records", False)  # 控制审核记录显示状态
     st.session_state.setdefault("audit_page", 1)
@@ -340,6 +341,7 @@ def kb_chat(api: ApiRequest):
             def on_kb_change():
                 st.toast(f"已加载知识库： {st.session_state.selected_kb}")
 
+
             with placeholder.container():
                 if dialogue_mode == "知识库问答":
                     kb_list = [x["kb_name"] for x in api.list_knowledge_bases()]
@@ -403,21 +405,33 @@ def kb_chat(api: ApiRequest):
                             st.error("没有找到可处理的文件")
                             st.stop()
                         
+                        # 初始化审核文件队列
+                        st.session_state["audit_queue"] = [
+                            {"name": file.name, "file": file, "status": "待审核", "file_id": None}
+                            for file in processed_files
+                        ]
+                        st.session_state["audit_queue_index"] = 0  # 当前处理的索引
+                        st.session_state["audit_files"] = []  # 清空已有的audit_files
+                        st.session_state["trigger_auto_audit"] = True  # 触发第一个文件的审核
+                        
                         # 创建进度条
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
+                        st.session_state["audit_progress_bar"] = st.progress(0)
+                        st.session_state["audit_status_text"] = st.empty()
                         
                         db = AuditDatabase()
                         total_files = len(processed_files)
                         
-                        for idx, file in enumerate(processed_files, 1):
-                            status_text.text(f"正在处理 {file.name} ({idx}/{total_files})")
+                        # 为每个文件生成file_id并添加到数据库
+                        for idx, file_info in enumerate(st.session_state["audit_queue"]):
+                            file = file_info["file"]
+                            st.session_state["audit_status_text"].text(f"正在处理 {file.name} ({idx+1}/{total_files})")
                             
                             # 上传单个文件并获取chat_id
                             file_chat_id = upload_temp_docs([file], api)
+                            file_info["file_id"] = file_chat_id
                             
                             # 保存文件信息到数据库
-                            file_info = {
+                            db_file_info = {
                                 "文件名": file.name,
                                 "状态": "正在处理文档",
                                 "审核时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -425,19 +439,42 @@ def kb_chat(api: ApiRequest):
                                 "是否通过": "待审核",
                                 "总分": "-"
                             }
-                            db.add_record(file_info)
+                            db.add_record(db_file_info)
                             
-                            # 触发该文件的自动审核
-                            st.session_state["file_chat_id"] = file_chat_id
-                            st.session_state["current_audit_filename"] = file.name
-                            st.session_state["trigger_auto_audit"] = True
+                            # 添加到audit_files
+                            st.session_state["audit_files"].append(db_file_info)
                             
                             # 更新进度
-                            progress_bar.progress(idx/total_files)
+                            st.session_state["audit_progress_bar"].progress((idx+1)/total_files)
                         
-                        status_text.text("所有文件处理完成！")
-                        st.success(f"已上传并开始审核 {total_files} 个文件")
+                        st.session_state["audit_status_text"].text("文件上传完成，开始审核...")
                         st.rerun()
+
+                # 检查是否有待审核的文件并触发审核
+                if dialogue_mode == "审核评价模式" and st.session_state.get("trigger_auto_audit", False) and st.session_state.get("audit_queue", []):
+                    queue = st.session_state["audit_queue"]
+                    index = st.session_state.get("audit_queue_index", 0)
+                    
+                    if index < len(queue):
+                        current_file = queue[index]
+                        st.session_state["file_chat_id"] = current_file["file_id"]
+                        st.session_state["current_audit_filename"] = current_file["name"]
+                        
+                        # 更新状态显示
+                        st.session_state["audit_status_text"].text(f"正在审核 {current_file['name']} ({index+1}/{len(queue)})")
+                        
+                        # 标记当前文件正在审核
+                        current_file["status"] = "正在审核"
+                    else:
+                        # 所有文件审核完成
+                        st.session_state["trigger_auto_audit"] = False
+                        st.session_state["audit_status_text"].text("所有文件审核完成！")
+                        st.session_state["audit_progress_bar"].progress(1.0)
+                        st.success(f"已完成 {len(queue)} 个文件的审核")
+                        st.session_state["audit_queue"] = []  # 清空队列
+                        st.session_state["audit_queue_index"] = 0
+                        st.rerun()
+                
                 elif dialogue_mode == "搜索引擎问答":
                     search_engine_list = list(Settings.tool_settings.search_internet["search_engine_config"])
                     search_engine = st.selectbox(
@@ -445,7 +482,7 @@ def kb_chat(api: ApiRequest):
                         options=search_engine_list,
                         key="search_engine",
                     )
-
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~
         with tabs[1]:
             cols = st.columns(3)
             conv_names = chat_box.get_chat_names()
@@ -518,7 +555,10 @@ def kb_chat(api: ApiRequest):
         kb_response = kb_client.chat.completions.create(
             messages=kb_messages,
             model=llm_model,
-            extra_body={"return_direct": True}
+            extra_body={"return_direct": True,
+                        "chunk_content":False,
+                        "document_only":True
+                    }
         )
         kb_content = "\n\n".join(kb_response.docs) if hasattr(kb_response, 'docs') else "暂无参考信息"
         
@@ -621,6 +661,7 @@ def kb_chat(api: ApiRequest):
             result_message = f"审核完成 - 总分：{score}分，状态：{status}" if score is not None else "审核完成但无法解析分数"
             st.success(result_message)
 
+
             # 生成下载按钮
             original_filename = st.session_state.get("current_audit_filename", "未命名文件")
             report_filename = f"{original_filename}的审核报告.md"
@@ -636,7 +677,21 @@ def kb_chat(api: ApiRequest):
 
             st.session_state["last_audit_result"] = full_report_text
             st.session_state["audit_time"] = datetime.now()
-            
+
+            # 移动到下一个文件
+            if st.session_state.get("audit_queue", []):
+                st.session_state["audit_queue_index"] += 1
+                if st.session_state["audit_queue_index"] < len(st.session_state["audit_queue"]):
+                    st.session_state["trigger_auto_audit"] = True
+                else:
+                    st.session_state["trigger_auto_audit"] = False
+                    st.session_state["audit_status_text"].text("所有文件审核完成！")
+                    st.session_state["audit_progress_bar"].progress(1.0)
+                    st.success(f"已完成 {len(st.session_state['audit_queue'])} 个文件的审核")
+                    st.session_state["audit_queue"] = []
+                    st.session_state["audit_queue_index"] = 0
+                st.rerun()
+
         except Exception as e:
             for i, file_info in enumerate(st.session_state.audit_files):
                 if file_info["file_id"] == knowledge_id:
